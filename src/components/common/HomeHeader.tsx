@@ -15,7 +15,7 @@ const HomeHeader = () => {
       <div className="w-full mx-auto max-w-container flex items-center justify-between px-[20px] py-[5px] xs:px-[40px] md:py-[15px] md:px-[80px] desktop:px-[152px] desktop:py-[21px]">
         <div className="flex justify-center items-center">
           <p className="text-obsidianBlack font-bold text-titleXl xl:leading-[100%] xl:tracking-[-1px]">
-            LOGO
+            LOGOO
           </p>
         </div>
 

@@ -13,7 +13,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const isMessagesRoute = pathname === routePath.messages;
 
   return (
-    <div className="min-h-screen bg-mintUltraLight">
+    <div className="bg-mintUltraLight">
       <DashboardHeader />
       <div
         className={`max-w-container mx-auto ${
