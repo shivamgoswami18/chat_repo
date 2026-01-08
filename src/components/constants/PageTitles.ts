@@ -1,0 +1,23 @@
+export const pageTitles = {
+  logInPageTitle: "Log in",
+  dashboardPageTitle: "Dashboard",
+  profilePageTitle: "Profile",
+  settingsPageTitle: "Settings",
+  registerPageTitle: "Register",
+  verifyOtpPageTitle: "Verify",
+  forgotPasswordPageTitle: "Forgot Password",
+  resetPasswordPageTitle: "Reset Password",
+  passwordSuccessPageTitle: "Success",
+  projectPageTitle: "Projects",
+  selectServicePageTitle: "Select Service",
+  projectDescriptionPageTitle: "Project Description",
+  projectLocationPageTitle: "Project Location",
+  contactDetailPageTitle: "Contact Details",
+  messagePageTitle: "Messages",
+  accessDeniedPageTitle: "Access denied",
+  myProfilePageTitle: "My Profile",
+  myOffersPageTitle: "My offers",
+  createPasswordPageTitle: "Create password",
+  subscriptionsPageTitle: "Subscriptions",
+  myProjectsPageTitle : "My Projects"
+};

@@ -1,0 +1,43 @@
+#!/bin/sh
+set -e                            # fail early on errors
+set -o pipefail                   # catch failures in piped commands
+ 
+echo "🔍 Running pre-commit checks..."
+ 
+ALL_STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
+echo "📂 All staged files:"
+echo "$ALL_STAGED_FILES"
+ 
+LINT_FILES=$(echo "$ALL_STAGED_FILES" | grep -E '\.(ts|js|tsx|jsx|vue)$' | grep -v 'cypress/support/index.d.ts' || true)
+echo "📁 Lintable files:"
+echo "$LINT_FILES"
+ 
+ESLINT_EXIT_CODE=0
+CONSOLE_LOG_ERRORS=0
+ 
+if [ -n "$LINT_FILES" ]; then
+  echo "🔧 Running ESLint..."
+  npx eslint $LINT_FILES || ESLINT_EXIT_CODE=$?
+  echo "ESLint exit code: $ESLINT_EXIT_CODE"
+ 
+  echo "🔎 Searching for console.log..."
+  CONSOLE_LOG_OUTPUT=$(git grep --cached -n "console.log" -- $LINT_FILES 2>/dev/null || true)
+ 
+  if [ -n "$CONSOLE_LOG_OUTPUT" ]; then
+    echo "❌ console.log found:"
+    echo "$CONSOLE_LOG_OUTPUT"
+    CONSOLE_LOG_ERRORS=1
+  else
+    echo "✅ No console.log found."
+  fi
+else
+  echo "ℹ️ No JS/TS files to lint or check."
+fi
+ 
+if [ $ESLINT_EXIT_CODE -ne 0 ] || [ $CONSOLE_LOG_ERRORS -ne 0 ]; then
+  echo "❌ Commit blocked due to errors."
+  exit 1
+fi
+ 
+echo "✅ All checks passed."
+exit 0
