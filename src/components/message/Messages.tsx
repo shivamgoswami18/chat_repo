@@ -11,6 +11,7 @@ import {
   ImageIcon,
   SendIcon,
   BackArrowIcon,
+  CloseIcon,
 } from "@/assets/icons/CommonIcons";
 import user_image from "@/assets/images/user_dummy_image.png";
 import BaseButton from "@/components/base/BaseButton";
@@ -65,6 +66,7 @@ export default function Messages() {
   );
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [allMessages, setAllMessages] = useState<Message[]>([]); // Store all messages for search highlighting
   const [messageText, setMessageText] = useState<string>("");
   const [showChatView, setShowChatView] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
@@ -76,12 +78,40 @@ export default function Messages() {
     business_name: string;
     business_image: string | null;
   } | null>(null);
+  const [isSearchMode, setIsSearchMode] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [contactSearchQuery, setContactSearchQuery] = useState<string>("");
+  const [isContactSearchVisible, setIsContactSearchVisible] =
+    useState<boolean>(false);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const contactSearchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const otherUserTypingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const hasProcessedBusinessIdRef = useRef<string | null>(null);
   const hasLoadedChatListRef = useRef<boolean>(false);
   const hasLoadedChatHistoryRef = useRef<string | null>(null);
+
+  // Scroll to bottom
+  const scrollToBottom = useCallback((instant: boolean = false) => {
+    if (instant && messagesContainerRef.current) {
+      // Instant jump with zero animation - directly set scrollTop
+      // Use requestAnimationFrame to ensure DOM is ready
+      requestAnimationFrame(() => {
+        if (messagesContainerRef.current) {
+          const container = messagesContainerRef.current;
+          container.scrollTop = container.scrollHeight;
+        }
+      });
+    } else if (messagesEndRef.current) {
+      // Smooth scroll for new messages
+      messagesEndRef.current.scrollIntoView({
+        behavior: "smooth",
+      });
+    }
+  }, []);
 
   // Get Redux state for projects and offers
   const receivedOffers = useSelector(
@@ -126,99 +156,102 @@ export default function Messages() {
   );
 
   // Load chat list
-  const loadChatList = useCallback(async () => {
-    if (hasLoadedChatListRef.current && !businessIdFromUrl) {
-      // Don't reload if already loaded and no business_id in URL
-      return;
-    }
+  const loadChatList = useCallback(
+    async (search: string = "") => {
+      if (hasLoadedChatListRef.current && !businessIdFromUrl && !search) {
+        // Don't reload if already loaded and no business_id in URL and no search
+        return;
+      }
 
-    setLoadingChats(true);
-    try {
-      const thunkResult = dispatch(
-        getChatList({
-          sortKey: "updatedAt",
-          sortValue: "desc",
-          page: 1,
-          limit: 100,
-          search: "",
-        })
-      );
-
-      // The thunk returns a promise, await it
-      const result = await thunkResult;
-
-      if (result?.items && Array.isArray(result.items)) {
-        const formattedContacts: Contact[] = result.items.map(
-          (chat: ChatContact) => {
-            // The API returns simplified structure: _id is chat_id, user_id is the other user
-            // Use the new structure if available, otherwise fall back to old structure
-            const chatId = chat._id; // _id is the chat_id
-            const otherUserId =
-              chat.user_id ||
-              (chat.sender_id === userId ? chat.receiver_id : chat.sender_id);
-            const otherUserName =
-              chat.name ||
-              (chat.sender_id === userId
-                ? chat.receiver?.full_name
-                : chat.sender?.full_name) ||
-              "Unknown User";
-            const otherUserImage =
-              chat.profile_image ||
-              (chat.sender_id === userId
-                ? chat.receiver?.profile_image
-                : chat.sender?.profile_image) ||
-              user_image.src;
-            const lastMessageText =
-              chat.last_message ||
-              chat.lastMessage?.message ||
-              "No messages yet";
-
-            return {
-              id: chat._id,
-              chatId: chatId,
-              name: otherUserName,
-              lastMessage: lastMessageText,
-              avatar: otherUserImage || user_image.src,
-              unreadCount: chat.unreadCount || 0,
-              receiverId: otherUserId || "",
-            };
-          }
+      setLoadingChats(true);
+      try {
+        const thunkResult = dispatch(
+          getChatList({
+            sortKey: "updatedAt",
+            sortValue: "desc",
+            page: 1,
+            limit: 100,
+            search: search,
+          })
         );
 
-        setContacts(formattedContacts);
-        hasLoadedChatListRef.current = true;
+        // The thunk returns a promise, await it
+        const result = await thunkResult;
 
-        // If we have tempBusinessData and now found the contact in list, clear temp data
-        if (tempBusinessData && businessIdFromUrl) {
-          const foundContact = formattedContacts.find(
-            (c) => c.receiverId === businessIdFromUrl
+        if (result?.items && Array.isArray(result.items)) {
+          const formattedContacts: Contact[] = result.items.map(
+            (chat: ChatContact) => {
+              // The API returns simplified structure: _id is chat_id, user_id is the other user
+              // Use the new structure if available, otherwise fall back to old structure
+              const chatId = chat._id; // _id is the chat_id
+              const otherUserId =
+                chat.user_id ||
+                (chat.sender_id === userId ? chat.receiver_id : chat.sender_id);
+              const otherUserName =
+                chat.name ||
+                (chat.sender_id === userId
+                  ? chat.receiver?.full_name
+                  : chat.sender?.full_name) ||
+                "Unknown User";
+              const otherUserImage =
+                chat.profile_image ||
+                (chat.sender_id === userId
+                  ? chat.receiver?.profile_image
+                  : chat.sender?.profile_image) ||
+                user_image.src;
+              const lastMessageText =
+                chat.last_message ||
+                chat.lastMessage?.message ||
+                "No messages yet";
+
+              return {
+                id: chat._id,
+                chatId: chatId,
+                name: otherUserName,
+                lastMessage: lastMessageText,
+                avatar: otherUserImage || user_image.src,
+                unreadCount: chat.unreadCount || 0,
+                receiverId: otherUserId || "",
+              };
+            }
           );
-          if (foundContact) {
-            setTempBusinessData(null);
-            // If chat is open with this business, update selectedContactId
-            if (selectedChatId && !selectedContactId) {
-              setSelectedContactId(foundContact.id);
+
+          setContacts(formattedContacts);
+          hasLoadedChatListRef.current = true;
+
+          // If we have tempBusinessData and now found the contact in list, clear temp data
+          if (tempBusinessData && businessIdFromUrl) {
+            const foundContact = formattedContacts.find(
+              (c) => c.receiverId === businessIdFromUrl
+            );
+            if (foundContact) {
+              setTempBusinessData(null);
+              // If chat is open with this business, update selectedContactId
+              if (selectedChatId && !selectedContactId) {
+                setSelectedContactId(foundContact.id);
+              }
             }
           }
+        } else {
+          // If no data or empty response, set empty array
+          setContacts([]);
+          hasLoadedChatListRef.current = true;
         }
-      } else {
-        // If no data or empty response, set empty array
-        setContacts([]);
-        hasLoadedChatListRef.current = true;
+      } catch (error) {
+        console.error("Failed to load chat list:", error);
+      } finally {
+        setLoadingChats(false);
       }
-    } catch (error) {
-      console.error("Failed to load chat list:", error);
-    } finally {
-      setLoadingChats(false);
-    }
-  }, [
-    dispatch,
-    userId,
-    businessIdFromUrl,
-    tempBusinessData,
-    selectedChatId,
-    selectedContactId,
-  ]);
+    },
+    [
+      dispatch,
+      userId,
+      businessIdFromUrl,
+      tempBusinessData,
+      selectedChatId,
+      selectedContactId,
+    ]
+  );
 
   // Handle received message
   const handleReceivedMessage = useCallback(
@@ -244,6 +277,23 @@ export default function Messages() {
             return filtered;
           }
 
+          return [...filtered, uiMessage];
+        });
+
+        // Also update allMessages
+        setAllMessages((prev) => {
+          const filtered = prev.filter(
+            (msg) =>
+              !(
+                msg.id.startsWith("temp-") &&
+                msg.text === uiMessage.text &&
+                msg.isOutgoing === uiMessage.isOutgoing
+              )
+          );
+          const exists = filtered.some((msg) => msg.id === uiMessage.id);
+          if (exists) {
+            return filtered;
+          }
           return [...filtered, uiMessage];
         });
         scrollToBottom();
@@ -280,7 +330,7 @@ export default function Messages() {
         return [updatedContact, ...newContacts];
       });
     },
-    [selectedChatId, convertSocketMessageToUIMessage]
+    [selectedChatId, convertSocketMessageToUIMessage, scrollToBottom]
   );
 
   // Handle chat history
@@ -302,11 +352,19 @@ export default function Messages() {
         return timeA - timeB;
       });
 
+      // Store all messages and set current messages
+      setAllMessages(uiMessages);
       setMessages(uiMessages);
-      setLoading(false); // Stop loading when history is received
-      scrollToBottom();
+      // Keep loading state until scroll completes - wait for DOM to render, then scroll instantly
+      setTimeout(() => {
+        scrollToBottom(true);
+        // After scroll completes, hide loading
+        setTimeout(() => {
+          setLoading(false);
+        }, 0);
+      }, 0);
     },
-    [convertSocketMessageToUIMessage, selectedChatId]
+    [convertSocketMessageToUIMessage, selectedChatId, scrollToBottom]
   );
 
   // Handle other user typing
@@ -324,7 +382,7 @@ export default function Messages() {
     }, 3000);
 
     scrollToBottom();
-  }, []);
+  }, [scrollToBottom]);
 
   // Handle other user stopped typing
   const handleOtherUserStoppedTyping = useCallback(() => {
@@ -390,7 +448,7 @@ export default function Messages() {
       // Skip if this is the currently selected chat (it has its own connection)
       if (contact.chatId === currentSelectedChatId) return;
 
-      console.log("Connecting to chat for listening:", contact.chatId);
+      // console.log("Connecting to chat for listening:", contact.chatId);
 
       // Create socket connection for this chat
       const socket = io(wsUrl, {
@@ -409,13 +467,13 @@ export default function Messages() {
 
       // Listen to messages from this chat
       socket.on("receivedMessage", (message: SocketMessage) => {
-        console.log("Received message from chat:", contact.chatId, message);
+        // console.log("Received message from chat:", contact.chatId, message);
         // Handle message - this will update the contact list
         handleReceivedMessage(message);
       });
 
       socket.on("connect", () => {
-        console.log("Connected to chat for listening:", contact.chatId);
+        // console.log("Connected to chat for listening:", contact.chatId);
       });
 
       socket.on("connect_error", (error) => {
@@ -433,7 +491,7 @@ export default function Messages() {
 
       // Disconnect if chat is no longer in contact list
       if (!currentChatIds.has(chatId)) {
-        console.log("Disconnecting from chat:", chatId);
+        // console.log("Disconnecting from chat:", chatId);
         socket.disconnect();
         chatSockets.delete(chatId);
       }
@@ -690,6 +748,9 @@ export default function Messages() {
       setIsOtherUserTyping(false);
       setMessageText("");
       setLoading(true);
+      // Reset search when switching chats
+      setIsSearchMode(false);
+      setSearchQuery("");
 
       // Clear typing timeouts when switching chats
       if (otherUserTypingTimeoutRef.current) {
@@ -700,6 +761,14 @@ export default function Messages() {
         clearTimeout(typingTimeoutRef.current);
         typingTimeoutRef.current = null;
       }
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+        searchTimeoutRef.current = null;
+      }
+      if (contactSearchTimeoutRef.current) {
+        clearTimeout(contactSearchTimeoutRef.current);
+        contactSearchTimeoutRef.current = null;
+      }
 
       // Small delay to ensure socket is ready
       setTimeout(() => {
@@ -709,9 +778,12 @@ export default function Messages() {
       // Reset when no chat selected
       hasLoadedChatHistoryRef.current = null;
       setMessages([]);
+      setAllMessages([]);
       setMessageText("");
       setIsOtherUserTyping(false);
       setLoading(false);
+      setIsSearchMode(false);
+      setSearchQuery("");
 
       // Clear typing timeouts
       if (otherUserTypingTimeoutRef.current) {
@@ -722,17 +794,35 @@ export default function Messages() {
         clearTimeout(typingTimeoutRef.current);
         typingTimeoutRef.current = null;
       }
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+        searchTimeoutRef.current = null;
+      }
+      if (contactSearchTimeoutRef.current) {
+        clearTimeout(contactSearchTimeoutRef.current);
+        contactSearchTimeoutRef.current = null;
+      }
     }
   }, [selectedChatId, isConnected, requestChatHistory]);
 
-  // Scroll to bottom
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
+  // Scroll to bottom when messages change (smooth scroll for new messages)
+  // Skip during initial load - handleChatHistory handles that
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, isOtherUserTyping]);
+    if (messages.length > 0 && !loading) {
+      scrollToBottom(false);
+    }
+  }, [messages, isOtherUserTyping, scrollToBottom, loading]);
+
+  // Scroll to bottom instantly when chat view opens or chat changes
+  useEffect(() => {
+    if (showChatView && selectedChatId && messages.length > 0 && !loading) {
+      // Small delay to ensure DOM is fully rendered
+      const timer = setTimeout(() => {
+        scrollToBottom(true);
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [showChatView, selectedChatId, loading, messages.length, scrollToBottom]);
 
   // Inject typing animation styles
   useEffect(() => {
@@ -773,11 +863,14 @@ export default function Messages() {
     setSelectedContactId(null);
     setSelectedChatId(null);
     setMessages([]);
+    setAllMessages([]);
     setMessageText("");
     setTempBusinessData(null);
     setIsOtherUserTyping(false);
     hasLoadedChatHistoryRef.current = null;
     setLoading(false);
+    setIsSearchMode(false);
+    setSearchQuery("");
 
     // Clear typing timeouts
     if (otherUserTypingTimeoutRef.current) {
@@ -787,6 +880,10 @@ export default function Messages() {
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
       typingTimeoutRef.current = null;
+    }
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = null;
     }
   };
 
@@ -905,6 +1002,7 @@ export default function Messages() {
         createdAt: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, optimisticMessage]);
+      setAllMessages((prev) => [...prev, optimisticMessage]);
       scrollToBottom();
 
       // Send message via WebSocket
@@ -967,6 +1065,7 @@ export default function Messages() {
     sendingMessage,
     isConnected,
     requestChatHistory,
+    scrollToBottom,
   ]);
 
   // Handle typing indicator
@@ -1001,10 +1100,150 @@ export default function Messages() {
     }
   };
 
+  // Highlight search terms in text
+  const highlightSearchText = useCallback(
+    (text: string, searchQuery: string) => {
+      if (!searchQuery.trim()) {
+        return <>{text}</>;
+      }
+
+      const escapedQuery = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(`(${escapedQuery})`, "gi");
+      const parts = text.split(regex);
+      const searchLower = searchQuery.toLowerCase();
+
+      return (
+        <>
+          {parts.map((part, idx) => {
+            // Check if this part matches the search (case-insensitive)
+            if (part.toLowerCase() === searchLower) {
+              return (
+                <mark
+                  key={`highlight-${part}-${idx}-${text.length}`}
+                  className="bg-yellow-300 dark:bg-yellow-600 px-0 py-0 rounded-[2px]"
+                >
+                  {part}
+                </mark>
+              );
+            }
+            return (
+              <span key={`text-${part}-${idx}-${text.length}`}>{part}</span>
+            );
+          })}
+        </>
+      );
+    },
+    []
+  );
+
+  // Check if message matches search query
+  const messageMatchesSearch = (
+    message: Message,
+    searchQuery: string
+  ): boolean => {
+    if (!searchQuery.trim()) {
+      return false;
+    }
+    return message.text.toLowerCase().includes(searchQuery.toLowerCase());
+  };
+
+  // Handle contact search input change with debounce
+  const handleContactSearchChange = (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const query = e.target.value;
+    setContactSearchQuery(query);
+
+    // Clear existing timeout
+    if (contactSearchTimeoutRef.current) {
+      clearTimeout(contactSearchTimeoutRef.current);
+    }
+
+    // Debounce the API call
+    contactSearchTimeoutRef.current = setTimeout(() => {
+      hasLoadedChatListRef.current = false; // Allow reload when searching
+      loadChatList(query);
+    }, 300);
+  };
+
+  // Handle search input change with debounce
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const query = e.target.value;
+    setSearchQuery(query);
+
+    // Clear existing timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    // For local highlighting, we don't need to call API
+    // Just update the search query and messages will be highlighted
+    // If user wants to search server-side, we can add that later
+    searchTimeoutRef.current = setTimeout(() => {
+      if (!query.trim()) {
+        // If search is cleared, show all messages
+        setMessages(allMessages);
+      } else {
+        // Keep all messages but they will be highlighted in render
+        setMessages(allMessages);
+
+        // Scroll to first matching message
+        const firstMatch = allMessages.find((msg) =>
+          messageMatchesSearch(msg, query)
+        );
+        if (firstMatch) {
+          // Scroll to first match after a short delay
+          setTimeout(() => {
+            const element = document.getElementById(`message-${firstMatch.id}`);
+            if (element) {
+              element.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+          }, 100);
+        }
+      }
+    }, 300);
+  };
+
+  // Handle search mode toggle
+  const handleToggleSearch = () => {
+    if (isSearchMode) {
+      // Exit search mode
+      setIsSearchMode(false);
+      setSearchQuery("");
+      // Restore all messages without highlighting
+      setMessages(allMessages);
+    } else {
+      // Enter search mode
+      setIsSearchMode(true);
+    }
+  };
+
+  // Focus search input when search mode is enabled
+  useEffect(() => {
+    if (isSearchMode && searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
+  }, [isSearchMode]);
+
+  // Focus contact search input when it becomes visible
+  useEffect(() => {
+    if (isContactSearchVisible) {
+      // Small delay to ensure the input is rendered
+      setTimeout(() => {
+        const input = document.querySelector(
+          'input[name="contact-search"]'
+        ) as HTMLInputElement;
+        if (input) {
+          input.focus();
+        }
+      }, 100);
+    }
+  }, [isContactSearchVisible]);
+
   const selectedContact = contacts.find((c) => c.id === selectedContactId);
 
   return (
-    <div className="flex flex-col lg:flex-row h-[calc(100vh-120px)] gap-[8px] sm:gap-[12px] lg:gap-[16px]">
+    <div className="flex flex-col lg:flex-row h-full gap-[8px] sm:gap-[12px] lg:gap-[16px]">
       {/* Left Panel - Contacts List */}
       <div
         className={`w-full lg:w-[326px] flex flex-col bg-white md:rounded-[16px] ${
@@ -1012,18 +1251,65 @@ export default function Messages() {
         }`}
       >
         {/* Contacts Header */}
-        <div className="border-solid border-t md:border-t-0 border-0 border-b border-graySoft border-opacity-50 px-[10px] xxs:px-[20px] xs:px-[40px] py-[12px] sm:py-[16px] md:px-[20px] md:py-[20px]">
-          <div className="flex items-center justify-between">
-            <h2 className="text-textSm font-light text-opacity-50 text-obsidianBlack xl:leading-[100%] xl:tracking-[0.3px]">
-              Contacts
-            </h2>
-            <BaseButton
-              className="border-none bg-transparent"
-              startIcon={
-                <SearchIcon className="text-obsidianBlack w-[18px] h-[18px] sm:w-[20px] sm:h-[20px]" />
-              }
-            />
-          </div>
+        <div
+          className={`border-solid border-t md:border-t-0 border-0 border-b border-graySoft border-opacity-50 px-[10px] xxs:px-[20px] xs:px-[40px] md:px-[20px] ${
+            isContactSearchVisible
+              ? "py-[2px] sm:py-[7px] md:py-[11px]"
+              : "py-[12px] sm:py-[16px] md:py-[20px]"
+          }`}
+        >
+          {!isContactSearchVisible ? (
+            <div className="flex items-center justify-between">
+              <h2 className="text-textSm font-light text-opacity-50 text-obsidianBlack xl:leading-[100%] xl:tracking-[0.3px]">
+                Contacts
+              </h2>
+              <BaseButton
+                onClick={() => setIsContactSearchVisible(true)}
+                className="border-none bg-transparent"
+                startIcon={
+                  <SearchIcon className="text-obsidianBlack w-[18px] h-[18px] sm:w-[20px] sm:h-[20px]" />
+                }
+              />
+            </div>
+          ) : (
+            <div className="flex items-center gap-[8px] sm:gap-[12px] w-full">
+              <BaseButton
+                onClick={() => {
+                  setIsContactSearchVisible(false);
+                  setContactSearchQuery("");
+                  hasLoadedChatListRef.current = false;
+                  loadChatList("");
+                }}
+                className="border-none bg-transparent p-1 flex-shrink-0"
+                startIcon={
+                  <BackArrowIcon size={20} className="text-obsidianBlack" />
+                }
+              />
+              <div className="flex-1 relative">
+                <BaseInput
+                  name="contact-search"
+                  type="text"
+                  placeholder="Search contacts..."
+                  value={contactSearchQuery}
+                  onChange={handleContactSearchChange}
+                  className="w-full px-3 sm:px-4 py-2 border border-graySoft border-opacity-50 rounded-[8px] text-textBase text-obsidianBlack placeholder-stoneGray ring-0"
+                />
+                {contactSearchQuery && (
+                  <BaseButton
+                    onClick={() => {
+                      setContactSearchQuery("");
+                      hasLoadedChatListRef.current = false;
+                      loadChatList("");
+                    }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 border-none bg-transparent p-1"
+                    startIcon={
+                      <CloseIcon className="text-obsidianBlack w-[14px] h-[14px]" />
+                    }
+                  />
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Contacts List */}
@@ -1051,7 +1337,7 @@ export default function Messages() {
               >
                 <div className="relative w-[40px] h-[40px] sm:w-[44px] sm:h-[44px] lg:w-[48px] lg:h-[48px] border-[2px] border-solid border-obsidianBlack border-opacity-20 rounded-full overflow-hidden flex-shrink-0">
                   <Image
-                    src={contact.avatar}
+                    src={contact?.avatar}
                     alt={contact.name}
                     fill
                     className="object-cover"
@@ -1093,159 +1379,245 @@ export default function Messages() {
         ) : (
           <>
             {/* Chat Header */}
-            <div className="flex items-center justify-between border-solid border-t md:border-t-0 border-0 border-b border-graySoft border-opacity-50 px-[10px] xxs:px-[20px] xs:px-[40px] md:px-[32px] xl:px-[42px] py-[10px] sm:py-[12px]">
-              <div className="flex items-center gap-[5px] sm:gap-[7px]">
-                {/* Back Button - Only visible on mobile */}
-                <BaseButton
-                  onClick={handleBackToContacts}
-                  className="lg:hidden border-none bg-transparent mr-[8px] p-1"
-                  startIcon={
-                    <BackArrowIcon size={20} className="text-obsidianBlack" />
-                  }
-                />
-                <div className="relative w-[32px] h-[32px] sm:w-[36px] sm:h-[36px] border-[2px] border-solid border-obsidianBlack border-opacity-20 rounded-full overflow-hidden flex-shrink-0">
-                  <Image
-                    src={
-                      selectedContact?.avatar ||
-                      tempBusinessData?.business_image ||
-                      user_image.src
-                    }
-                    alt={
-                      selectedContact?.name ||
-                      tempBusinessData?.business_name ||
-                      "Business"
-                    }
-                    fill
-                    className="object-cover"
-                  />
-                </div>
-                <h3 className="text-textSm font-light text-obsidianBlack xl:leading-[100%] xl:tracking-[0px]">
-                  {selectedContact?.name ||
-                    tempBusinessData?.business_name ||
-                    "Business"}
-                </h3>
-              </div>
-              <div className="flex items-center">
-                <BaseButton
-                  className="border-none bg-transparent"
-                  startIcon={
-                    <SearchIcon className="text-obsidianBlack w-[18px] h-[18px] sm:w-[20px] sm:h-[20px]" />
-                  }
-                />
-              </div>
-            </div>
-
-            {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto px-[10px] xxs:px-[20px] xs:px-[40px] md:px-[32px] xl:px-[42px] py-[16px] sm:py-[24px] lg:py-[30px]">
-              {loading ||
-              (selectedChatId && !isConnected) ||
-              (selectedChatId &&
-                hasLoadedChatHistoryRef.current !== selectedChatId) ? (
-                <div className="flex justify-center items-center h-full">
-                  <BaseLoader />
-                </div>
+            <div
+              className={`flex items-center justify-between border-solid border-t md:border-t-0 border-0 border-b border-graySoft border-opacity-50 px-[10px] xxs:px-[20px] xs:px-[40px] md:px-[32px] xl:px-[42px] ${
+                isSearchMode
+                  ? "py-[7px] sm:py-[10.5px] md:py-[10.5px]"
+                  : "py-[10px] sm:py-[12px]"
+              }`}
+            >
+              {!isSearchMode ? (
+                <>
+                  <div className="flex items-center gap-[5px] sm:gap-[7px]">
+                    {/* Back Button - Only visible on mobile */}
+                    <BaseButton
+                      onClick={handleBackToContacts}
+                      className="lg:hidden border-none bg-transparent mr-[8px] p-1"
+                      startIcon={
+                        <BackArrowIcon
+                          size={20}
+                          className="text-obsidianBlack"
+                        />
+                      }
+                    />
+                    <div className="relative w-[32px] h-[32px] sm:w-[36px] sm:h-[36px] border-[2px] border-solid border-obsidianBlack border-opacity-20 rounded-full overflow-hidden flex-shrink-0">
+                      <Image
+                        src={
+                          selectedContact?.avatar ||
+                          tempBusinessData?.business_image ||
+                          user_image.src
+                        }
+                        alt={
+                          selectedContact?.name ||
+                          tempBusinessData?.business_name ||
+                          "Business"
+                        }
+                        fill
+                        className="object-cover"
+                      />
+                    </div>
+                    <h3 className="text-textSm font-light text-obsidianBlack xl:leading-[100%] xl:tracking-[0px]">
+                      {selectedContact?.name ||
+                        tempBusinessData?.business_name ||
+                        "Business"}
+                    </h3>
+                  </div>
+                  <div className="flex items-center">
+                    <BaseButton
+                      onClick={handleToggleSearch}
+                      className="border-none bg-transparent"
+                      startIcon={
+                        <SearchIcon className="text-obsidianBlack w-[18px] h-[18px] sm:w-[20px] sm:h-[20px]" />
+                      }
+                    />
+                  </div>
+                </>
               ) : (
-                <div>
-                  {groupedMessages().length === 0 ? (
-                    <div className="flex justify-center items-center h-full">
-                      <p className="text-textBase text-obsidianBlack text-opacity-50">
-                        No messages yet. Start the conversation!
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col gap-[12px] sm:gap-[16px] lg:gap-[20px]">
-                      {groupedMessages().map((group, groupIndex) => {
-                        const isFirstGroup = groupIndex === 0;
-                        return (
-                          <div
-                            key={group.id}
-                            className={
-                              !isFirstGroup ? "mt-[24px] sm:mt-[30px]" : ""
-                            }
-                          >
-                            {group.date && group.date !== "Today" && (
-                              <div className="flex justify-center my-[20px] sm:my-[24px] lg:my-[30px]">
-                                <span className="text-textSm px-[16px] sm:px-[20px] lg:px-[26px] py-[6px] sm:py-[7px] text-obsidianBlack font-light text-opacity-70 bg-graySoft bg-opacity-25 rounded-[12px] sm:rounded-[16px] xl:leading-[100%] xl:tracking-[0.3px]">
-                                  {group.date}
-                                </span>
-                              </div>
-                            )}
-                            {group.date === "Today" && !isFirstGroup && (
-                              <div className="flex justify-center my-[20px] sm:my-[24px] lg:my-[30px]">
-                                <span className="text-textSm px-[16px] sm:px-[20px] lg:px-[26px] py-[6px] sm:py-[7px] text-obsidianBlack font-light text-opacity-70 bg-graySoft bg-opacity-25 rounded-[12px] sm:rounded-[16px] xl:leading-[100%] xl:tracking-[0.3px]">
-                                  Today
-                                </span>
-                              </div>
-                            )}
-                            <div className="flex flex-col gap-[12px] sm:gap-[16px] lg:gap-[20px]">
-                              {group.messages.map((message) => (
-                                <div
-                                  key={message.id}
-                                  className={`flex ${
-                                    message.isOutgoing
-                                      ? "justify-end"
-                                      : "justify-start"
-                                  }`}
-                                >
-                                  <div
-                                    className={`max-w-[85%] sm:max-w-[75%] lg:max-w-[70%] py-[10px] sm:py-[12px] lg:py-[14px] px-[14px] sm:px-[16px] lg:px-[20px] ${
-                                      message.isOutgoing
-                                        ? "bg-deepTeal text-white rounded-t-[12px] sm:rounded-t-[16px] rounded-bl-[12px] sm:rounded-bl-[16px]"
-                                        : "bg-deepTeal bg-opacity-10 text-obsidianBlack rounded-b-[12px] sm:rounded-b-[16px] rounded-tr-[12px] sm:rounded-tr-[16px]"
-                                    }`}
-                                  >
-                                    <p className="text-textBase font-light xl:leading-[100%] xl:tracking-[0.3px] break-words">
-                                      {message.text}
-                                    </p>
-                                    <p
-                                      className={`mt-[3px] sm:mt-[4px] text-textSm text-opacity-50 font-light xl:leading-[100%] xl:tracking-[0.3px] ${
-                                        message.isOutgoing
-                                          ? "text-white text-opacity-50 text-end"
-                                          : "text-obsidianBlack text-opacity-50 text-start"
-                                      }`}
-                                    >
-                                      {message.timestamp}
-                                    </p>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        );
-                      })}
-
-                      {/* Typing Indicator */}
-                      {isOtherUserTyping && (
-                        <div className="flex justify-start mt-[12px] sm:mt-[16px]">
-                          <div className="max-w-[85%] sm:max-w-[75%] lg:max-w-[70%] py-[10px] sm:py-[12px] lg:py-[14px] px-[14px] sm:px-[16px] lg:px-[20px] bg-deepTeal bg-opacity-10 rounded-b-[12px] sm:rounded-b-[16px] rounded-tr-[12px] sm:rounded-tr-[16px]">
-                            <div className="flex items-center gap-[6px]">
-                              <div className="flex gap-[4px] items-center">
-                                <span
-                                  className="w-[8px] h-[8px] bg-obsidianBlack bg-opacity-60 rounded-full typing-dot-animation"
-                                  style={{ animationDelay: "0ms" }}
-                                ></span>
-                                <span
-                                  className="w-[8px] h-[8px] bg-obsidianBlack bg-opacity-60 rounded-full typing-dot-animation"
-                                  style={{ animationDelay: "200ms" }}
-                                ></span>
-                                <span
-                                  className="w-[8px] h-[8px] bg-obsidianBlack bg-opacity-60 rounded-full typing-dot-animation"
-                                  style={{ animationDelay: "400ms" }}
-                                ></span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <div ref={messagesEndRef} />
+                <div className="flex items-center gap-[8px] sm:gap-[12px] w-full">
+                  <BaseButton
+                    onClick={handleToggleSearch}
+                    className="border-none bg-transparent p-1 flex-shrink-0"
+                    startIcon={
+                      <BackArrowIcon size={20} className="text-obsidianBlack" />
+                    }
+                  />
+                  <div className="flex-1 relative">
+                    <BaseInput
+                      type="text"
+                      placeholder="Search messages..."
+                      value={searchQuery}
+                      onChange={handleSearchChange}
+                      className="w-full px-3 sm:px-4 py-2 border border-graySoft border-opacity-50 rounded-[8px] text-textBase text-obsidianBlack placeholder-stoneGray ring-0"
+                    />
+                    {searchQuery && (
+                      <BaseButton
+                        onClick={() => {
+                          setSearchQuery("");
+                          setMessages(allMessages);
+                        }}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 border-none bg-transparent p-1"
+                        startIcon={
+                          <CloseIcon className="text-obsidianBlack w-[14px] h-[14px]" />
+                        }
+                      />
+                    )}
+                  </div>
                 </div>
               )}
             </div>
 
+            {/* Messages Area */}
+            <div
+              ref={messagesContainerRef}
+              className="flex-1 overflow-y-auto relative"
+              style={{
+                backgroundImage:
+                  "linear-gradient(rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.85)), url(https://i.pinimg.com/600x315/8c/98/99/8c98994518b575bfd8c949e91d20548b.jpg)",
+                backgroundRepeat: "repeat",
+                backgroundSize: "auto",
+                backgroundPosition: "center",
+                backgroundAttachment: "local",
+              }}
+            >
+              <div className="relative z-10 px-[10px] xxs:px-[20px] xs:px-[40px] md:px-[32px] xl:px-[42px] py-[16px] sm:py-[24px] lg:py-[30px]">
+                {loading ||
+                (selectedChatId && !isConnected) ||
+                (selectedChatId &&
+                  hasLoadedChatHistoryRef.current !== selectedChatId) ? (
+                  <div className="flex justify-center items-center h-full">
+                    <div className="flex gap-[4px] items-center">
+                      <span
+                        className="w-[8px] h-[8px] bg-obsidianBlack bg-opacity-60 rounded-full typing-dot-animation"
+                        style={{ animationDelay: "0ms" }}
+                      ></span>
+                      <span
+                        className="w-[8px] h-[8px] bg-obsidianBlack bg-opacity-60 rounded-full typing-dot-animation"
+                        style={{ animationDelay: "200ms" }}
+                      ></span>
+                      <span
+                        className="w-[8px] h-[8px] bg-obsidianBlack bg-opacity-60 rounded-full typing-dot-animation"
+                        style={{ animationDelay: "400ms" }}
+                      ></span>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    {groupedMessages().length === 0 ? (
+                      <div className="flex justify-center items-center h-full">
+                        <p className="text-textBase text-obsidianBlack text-opacity-50">
+                          No messages yet. Start the conversation!
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-[12px] sm:gap-[16px] lg:gap-[20px]">
+                        {groupedMessages().map((group, groupIndex) => {
+                          const isFirstGroup = groupIndex === 0;
+                          return (
+                            <div
+                              key={group.id}
+                              className={
+                                !isFirstGroup ? "mt-[24px] sm:mt-[30px]" : ""
+                              }
+                            >
+                              {group.date && group.date !== "Today" && (
+                                <div className="flex justify-center my-[20px] sm:my-[24px] lg:my-[30px]">
+                                  <span className="text-textSm px-[16px] sm:px-[20px] lg:px-[26px] py-[6px] sm:py-[7px] text-obsidianBlack font-light text-opacity-70 bg-graySoft bg-opacity-25 rounded-[12px] sm:rounded-[16px] xl:leading-[100%] xl:tracking-[0.3px]">
+                                    {group.date}
+                                  </span>
+                                </div>
+                              )}
+                              {group.date === "Today" && !isFirstGroup && (
+                                <div className="flex justify-center my-[20px] sm:my-[24px] lg:my-[30px]">
+                                  <span className="text-textSm px-[16px] sm:px-[20px] lg:px-[26px] py-[6px] sm:py-[7px] text-obsidianBlack font-light text-opacity-70 bg-graySoft bg-opacity-25 rounded-[12px] sm:rounded-[16px] xl:leading-[100%] xl:tracking-[0.3px]">
+                                    Today
+                                  </span>
+                                </div>
+                              )}
+                              <div className="flex flex-col gap-[12px] sm:gap-[16px] lg:gap-[20px]">
+                                {group.messages.map((message) => {
+                                  const isMatch =
+                                    searchQuery.trim() &&
+                                    messageMatchesSearch(message, searchQuery);
+                                  return (
+                                    <div
+                                      key={message.id}
+                                      id={`message-${message.id}`}
+                                      className={`flex ${
+                                        message.isOutgoing
+                                          ? "justify-end"
+                                          : "justify-start"
+                                      }`}
+                                    >
+                                      <div
+                                        className={`max-w-[85%] sm:max-w-[75%] lg:max-w-[70%] py-[10px] sm:py-[12px] lg:py-[14px] px-[14px] sm:px-[16px] lg:px-[20px] ${
+                                          message.isOutgoing
+                                            ? "bg-deepTeal text-white rounded-t-[12px] sm:rounded-t-[16px] rounded-bl-[12px] sm:rounded-bl-[16px]"
+                                            : "bg-deepTeal bg-opacity-10 text-obsidianBlack rounded-b-[12px] sm:rounded-b-[16px] rounded-tr-[12px] sm:rounded-tr-[16px]"
+                                        } ${
+                                          isMatch
+                                            ? "ring-2 ring-yellow-400 ring-opacity-75"
+                                            : ""
+                                        }`}
+                                      >
+                                        <p className="text-textBase font-light xl:leading-[100%] xl:tracking-[0.3px] break-words">
+                                          {searchQuery.trim()
+                                            ? highlightSearchText(
+                                                message.text,
+                                                searchQuery
+                                              )
+                                            : message.text}
+                                        </p>
+                                        <p
+                                          className={`mt-[3px] sm:mt-[4px] text-textSm text-opacity-50 font-light xl:leading-[100%] xl:tracking-[0.3px] ${
+                                            message.isOutgoing
+                                              ? "text-white text-opacity-50 text-end"
+                                              : "text-obsidianBlack text-opacity-50 text-start"
+                                          }`}
+                                        >
+                                          {message.timestamp}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {/* Typing Indicator */}
+                        {isOtherUserTyping && (
+                          <div className="flex justify-start mt-[12px] sm:mt-[16px]">
+                            <div className="max-w-[85%] sm:max-w-[75%] lg:max-w-[70%] py-[10px] sm:py-[12px] lg:py-[14px] px-[14px] sm:px-[16px] lg:px-[20px] bg-deepTeal bg-opacity-10 rounded-b-[12px] sm:rounded-b-[16px] rounded-tr-[12px] sm:rounded-tr-[16px]">
+                              <div className="flex items-center gap-[6px]">
+                                <div className="flex gap-[4px] items-center">
+                                  <span
+                                    className="w-[8px] h-[8px] bg-obsidianBlack bg-opacity-60 rounded-full typing-dot-animation"
+                                    style={{ animationDelay: "0ms" }}
+                                  ></span>
+                                  <span
+                                    className="w-[8px] h-[8px] bg-obsidianBlack bg-opacity-60 rounded-full typing-dot-animation"
+                                    style={{ animationDelay: "200ms" }}
+                                  ></span>
+                                  <span
+                                    className="w-[8px] h-[8px] bg-obsidianBlack bg-opacity-60 rounded-full typing-dot-animation"
+                                    style={{ animationDelay: "400ms" }}
+                                  ></span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <div ref={messagesEndRef} />
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Message Input Area */}
-            <div className="px-[10px] xxs:px-[20px] xs:px-[40px] md:px-[32px] xl:px-[42px] py-[12px] sm:py-[16px] lg:py-[21px] border-solid border-0 border-t border-graySoft border-opacity-50">
+            <div className="bg-graySoft bg-opacity-10 px-[10px] xxs:px-[20px] xs:px-[40px] md:px-[32px] xl:px-[42px] py-[12px] border-solid border-0 border-t border-graySoft border-opacity-50">
               <div className="flex items-center justify-between gap-[6px] sm:gap-[8px] lg:gap-[10px]">
                 <div className="flex items-center gap-[8px] sm:gap-[16px] lg:gap-[23px] flex-1 min-w-0">
                   <BaseButton
@@ -1261,7 +1633,7 @@ export default function Messages() {
                     onChange={handleInputChange}
                     onKeyDown={handleKeyPress}
                     disabled={!isConnected || sendingMessage}
-                    className="flex-1 px-3 sm:px-4 py-2 sm:py-3 border-none text-textBase text-obsidianBlack placeholder-stoneGray focus:outline-none focus:ring-2 focus:ring-deepTeal focus:ring-opacity-20 min-w-0"
+                    className="flex-1 px-3 sm:px-4 py-2 sm:py-3 border border-graySoft border-opacity-50 rounded-[8px] text-textBase text-obsidianBlack placeholder-stoneGray ring-0 min-w-0"
                     fullWidth
                   />
                 </div>

@@ -15,7 +15,7 @@ const getWebSocketURL = (): string => {
   }
   
   const baseUrl = BaseURL.replace("/api/", "").replace("https://", "wss://").replace("http://", "ws://");
-  console.log("WebSocket URL:", baseUrl);
+  // console.log("WebSocket URL:", baseUrl);
   return baseUrl;
 };
 
@@ -55,24 +55,24 @@ export const useChatSocket = ({
   // Connect to socket
   const connect = useCallback(() => {
     if (!chatId || !userId) {
-      console.log("Cannot connect: missing chatId or userId", { chatId, userId });
+      // console.log("Cannot connect: missing chatId or userId", { chatId, userId });
       setIsConnected(false);
       return;
     }
 
     if (socketRef.current?.connected) {
-      console.log("Socket already connected");
+      // console.log("Socket already connected");
       return;
     }
 
     const wsUrl = getWebSocketURL();
     if (!wsUrl) {
-      console.error("WebSocket URL is not configured");
+      // console.error("WebSocket URL is not configured");
       setIsConnected(false);
       return;
     }
 
-    console.log("Connecting to WebSocket:", wsUrl, "with chat_id:", chatId);
+    // console.log("Connecting to WebSocket:", wsUrl, "with chat_id:", chatId);
 
     // Disconnect existing socket if any
     if (socketRef.current) {
@@ -96,13 +96,13 @@ export const useChatSocket = ({
 
     // Connection event
     socket.on("connect", () => {
-      console.log("Socket connected:", socket.id);
+      // console.log("Socket connected:", socket.id);
       setIsConnected(true);
     });
 
     // Disconnect event
     socket.on("disconnect", () => {
-      console.log("Socket disconnected");
+      // console.log("Socket disconnected");
       setIsConnected(false);
     });
 
@@ -115,7 +115,7 @@ export const useChatSocket = ({
 
     // Receive message event
     socket.on("receivedMessage", (message: Message) => {
-      console.log("Socket receivedMessage event:", message);
+      // console.log("Socket receivedMessage event:", message);
       if (onMessage) {
         onMessage(message);
       }
@@ -170,7 +170,7 @@ export const useChatSocket = ({
         return false;
       }
 
-      console.log("Sending message:", { chat_id: chatId, sender: userId, message, type, image });
+      // console.log("Sending message:", { chat_id: chatId, sender: userId, message, type, image });
 
       socketRef.current.emit("sendMessage", {
         chat_id: chatId,
@@ -180,20 +180,25 @@ export const useChatSocket = ({
         image,
       });
 
-      console.log("Message sent successfully");
+      // console.log("Message sent successfully");
       return true;
     },
     [chatId, userId]
   );
 
   // Request chat history
-  const requestChatHistory = useCallback(() => {
+  const requestChatHistory = useCallback((search?: string) => {
     if (!socketRef.current?.connected || !chatId) {
       console.error("Socket not connected or missing chatId");
       return;
     }
 
-    socketRef.current.emit("chatHistory", { chat_id: chatId });
+    const payload: { chat_id: string; search?: string } = { chat_id: chatId };
+    if (search && search.trim()) {
+      payload.search = search.trim();
+    }
+
+    socketRef.current.emit("chatHistory", payload);
   }, [chatId]);
 
   // Send typing indicator
