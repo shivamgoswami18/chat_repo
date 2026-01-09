@@ -94,6 +94,45 @@ export default function Messages() {
   const hasLoadedChatListRef = useRef<boolean>(false);
   const hasLoadedChatHistoryRef = useRef<string | null>(null);
 
+  // Play sound when message is sent
+  const playSendSound = useCallback(() => {
+    try {
+      // Create audio context (with fallback for older browsers)
+      const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext: new () => AudioContext }).webkitAudioContext;
+      if (!AudioContextClass) {
+        return;
+      }
+      const audioContext = new AudioContextClass();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      // Connect nodes
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      // Configure sound - "toukk" like sound
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(800, audioContext.currentTime); // Start at 800Hz
+      oscillator.frequency.exponentialRampToValueAtTime(400, audioContext.currentTime + 0.1); // Drop to 400Hz
+
+      // Configure volume envelope
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+
+      // Play the sound
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.1);
+
+      // Cleanup
+      oscillator.onended = () => {
+        audioContext.close();
+      };
+    } catch (error) {
+      // Silently fail if audio context is not available
+      console.debug("Could not play send sound:", error);
+    }
+  }, []);
+
   // Scroll to bottom
   const scrollToBottom = useCallback((instant: boolean = false) => {
     if (instant && messagesContainerRef.current) {
@@ -256,6 +295,12 @@ export default function Messages() {
   // Handle received message
   const handleReceivedMessage = useCallback(
     (socketMessage: SocketMessage) => {
+      // Play sound if message is from another user (incoming message)
+      // Play for all incoming messages, regardless of which chat is selected
+      if (socketMessage.sender_id !== userId) {
+        playSendSound();
+      }
+
       if (socketMessage.chat_id === selectedChatId) {
         const uiMessage = convertSocketMessageToUIMessage(socketMessage);
 
@@ -330,7 +375,7 @@ export default function Messages() {
         return [updatedContact, ...newContacts];
       });
     },
-    [selectedChatId, convertSocketMessageToUIMessage, scrollToBottom]
+    [selectedChatId, convertSocketMessageToUIMessage, scrollToBottom, playSendSound, userId]
   );
 
   // Handle chat history
@@ -1016,6 +1061,8 @@ export default function Messages() {
         );
         setMessageText(messageToSend); // Restore message if failed
       } else {
+        // Play send sound
+        playSendSound();
         // Update contact list: move contact to top and update lastMessage (like WhatsApp)
         setContacts((prev) => {
           const contactIndex = prev.findIndex(
@@ -1066,6 +1113,7 @@ export default function Messages() {
     isConnected,
     requestChatHistory,
     scrollToBottom,
+    playSendSound,
   ]);
 
   // Handle typing indicator
